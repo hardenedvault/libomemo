@@ -46,6 +46,9 @@ CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Wstrict-overflow \
 		-fno-strict-aliasing -funsigned-char \
 		-fno-builtin-memset -g $(PKGCFG_C)
 CPPFLAGS += -D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE
+ifneq ($(strip $(OVERRIDE_OMEMO_XMLNS)),)
+CPPFLAGS += -DOMEMO_XMLNS='"$(OVERRIDE_OMEMO_XMLNS)"'
+endif
 CFLAGS_CONVERSATIONS=$(CFLAGS) -DOMEMO_XMLNS='"eu.siacs.conversations.axolotl"' -DOMEMO_NS_SEPARATOR='"."' -DOMEMO_NS_NOVERSION
 COVFLAGS = --coverage -O0 -g $(CFLAGS)
 LDFLAGS += -pthread -ldl -lm $(PKGCFG_L)
@@ -71,7 +74,7 @@ libomemo_storage: $(SDIR)/libomemo_storage.c build
 	$(LIBTOOL) --mode=compile $(CC) -c $(SDIR)/$@.c $(CFLAGS) $(CPPFLAGS) -o $(BDIR)/$@.lo
 
 $(BDIR)/libomemo.o: $(BDIR) $(SDIR)/libomemo.c $(SDIR)/libomemo.h
-	$(CC) -c $(CFLAGS) $(CPPFLAGS) $(SDIR)/libomemo.c -o $@
+	$(CC) -c $(CFLAGS) $(CPPFLAGS) -fPIC $(SDIR)/libomemo.c -o $@
 
 $(BDIR)/libomemo-conversations.o: $(SDIR)/libomemo.c $(BDIR)
 	$(CC) -c $(SDIR)/libomemo.c $(CFLAGS_CONVERSATIONS) $(CPPFLAGS) -fPIC -o $@
@@ -83,6 +86,9 @@ $(BDIR)/libomemo_storage.o: $(SDIR)/libomemo_storage.c $(BDIR)
 	$(CC) -c $(SDIR)/libomemo_storage.c $(CFLAGS) $(CPPFLAGS) -fPIC -o $@
 
 $(BDIR)/libomemo-conversations.a: $(BDIR)/libomemo-conversations.o $(BDIR)/libomemo_crypto.o $(BDIR)/libomemo_storage.o
+	$(AR) rcs $@ $^
+
+$(BDIR)/libomemo.a: $(BDIR)/libomemo.o $(BDIR)/libomemo_crypto.o $(BDIR)/libomemo_storage.o
 	$(AR) rcs $@ $^
 
 $(BDIR)/libomemo.so: $(BDIR)

@@ -11,73 +11,7 @@
 
 #include "libomemo.h"
 
-#define HINTS_XMLNS "urn:xmpp:hints"
-
-#ifndef OMEMO_XMLNS
-#define OMEMO_XMLNS "urn:xmpp:omemo"
-#endif
-
-#ifndef OMEMO_NS_SEPARATOR
-#define OMEMO_NS_SEPARATOR ":"
-#endif
-
-#define OMEMO_NS_SEPARATOR_FINAL ":"
-
-#define OMEMO_VERSION "0"
-
-#ifdef OMEMO_NS_NOVERSION
-#define OMEMO_NS OMEMO_XMLNS
-#else
-#define OMEMO_NS OMEMO_XMLNS ":" OMEMO_VERSION
-#endif
-
-#define PEP_NODE_NAME "node"
-#define DEVICELIST_PEP_NAME "devicelist"
-#define BUNDLE_PEP_NAME "bundles"
-
-#define OMEMO_DEVICELIST_PEP_NODE OMEMO_NS OMEMO_NS_SEPARATOR DEVICELIST_PEP_NAME
-
-#define MESSAGE_NODE_NAME "message"
-#define BODY_NODE_NAME "body"
-#define ENCRYPTED_NODE_NAME "encrypted"
-#define HEADER_NODE_NAME "header"
-#define IV_NODE_NAME "iv"
-#define KEY_NODE_NAME "key"
-#define PAYLOAD_NODE_NAME "payload"
-#define STORE_NODE_NAME "store"
-
-#define PUBLISH_NODE_NAME "publish"
-#define ITEMS_NODE_NAME "items"
-#define ITEM_NODE_NAME "item"
-#define LIST_NODE_NAME "list"
-#define BUNDLE_NODE_NAME "bundle"
-#define SIGNED_PRE_KEY_NODE_NAME "signedPreKeyPublic"
-#define SIGNATURE_NODE_NAME "signedPreKeySignature"
-#define PREKEYS_NODE_NAME "prekeys"
-#define PRE_KEY_NODE_NAME "preKeyPublic"
-#define IDENTITY_KEY_NODE_NAME "identityKey"
-#define DEVICE_NODE_NAME "device"
-
-#define XMLNS_ATTR_NAME "xmlns"
-#define MESSAGE_NODE_FROM_ATTR_NAME "from"
-#define MESSAGE_NODE_TO_ATTR_NAME "to"
-#define HEADER_NODE_SID_ATTR_NAME "sid"
-#define KEY_NODE_RID_ATTR_NAME "rid"
-#define KEY_NODE_PREKEY_ATTR_NAME "prekey"
-#define KEY_NODE_PREKEY_ATTR_VAL_TRUE "true"
-#define PUBLISH_NODE_NODE_ATTR_NAME "node"
-#define SIGNED_PRE_KEY_NODE_ID_ATTR_NAME "signedPreKeyId"
-#define PRE_KEY_NODE_ID_ATTR_NAME "preKeyId"
-#define DEVICE_NODE_ID_ATTR_NAME "id"
-
-#define OMEMO_DB_DEFAULT_FN "omemo.sqlite"
-
-#define NO_OMEMO_MSG "You received an OMEMO encrypted message, but your client does not support it."
-
-#define EME_NODE_NAME "encryption"
-#define EME_XMLNS "urn:xmpp:eme:0"
-#define EME_NAMESPACE_ATTR_NAME "namespace"
-#define EME_NAME_ATTR_NAME "name"
+#include "libomemo_defs.h"
 
 struct omemo_bundle {
   char * device_id;
@@ -137,6 +71,19 @@ static int int_to_string(uint32_t in, char ** out) {
   *out = int_string;
   return len;
 }
+
+#if !(defined(_POSIX_C_SOURCE) && (_POSIX_C_SOURCE >= 200809L))
+static char * my_strdup(const char * s)
+{
+  size_t alloc_size = 1 + strlen(s);
+  char * ret = (char *)malloc(alloc_size);
+  if (ret) {
+    strncpy(ret, s, alloc_size);
+  }
+  return ret;
+}
+#define strdup my_strdup
+#endif
 
 /**
  * Helps basic sanity checking of received XML.
@@ -456,17 +403,26 @@ int omemo_bundle_export(omemo_bundle * bundle_p, char ** publish) {
     //FIXME: numbers into constants
   }
 
+#if (OMEMO_VERSION <= 0)
   len = snprintf((void *) 0, 0, format, OMEMO_NS, OMEMO_NS_SEPARATOR, BUNDLE_PEP_NAME, OMEMO_NS_SEPARATOR_FINAL, bundle_p->device_id) + 1;
   node_value = malloc(len);
   if (snprintf(node_value, len, format, OMEMO_NS, OMEMO_NS_SEPARATOR, BUNDLE_PEP_NAME, OMEMO_NS_SEPARATOR_FINAL, bundle_p->device_id) <= 0) {
     ret_val = -4;
     goto cleanup;
   }
+#endif
 
   publish_node_p = mxmlNewElement(MXML_NO_PARENT, PUBLISH_NODE_NAME);
+#if (OMEMO_VERSION > 0)
+  mxmlElementSetAttr(publish_node_p, PUBLISH_NODE_NODE_ATTR_NAME, OMEMO_NS OMEMO_NS_SEPARATOR BUNDLE_PEP_NAME);
+#else
   mxmlElementSetAttr(publish_node_p, PUBLISH_NODE_NODE_ATTR_NAME, node_value);
+#endif
 
   item_node_p = mxmlNewElement(publish_node_p, ITEM_NODE_NAME);
+#if (OMEMO_VERSION > 0)
+  mxmlElementSetAttr(item_node_p, ITEM_NODE_ID_ATTR_NAME, bundle_p->device_id);
+#endif
 
   bundle_node_p = mxmlNewElement(item_node_p, BUNDLE_NODE_NAME);
   mxmlElementSetAttr(bundle_node_p, "xmlns", OMEMO_NS);
@@ -499,7 +455,7 @@ int omemo_bundle_import (const char * received_bundle, omemo_bundle ** bundle_pp
   mxml_node_t * bundle_node_p = (void *) 0;
   const char * bundle_node_name = (void *) 0;
   char ** split = (void *) 0;
-  char * device_id = (void *) 0;
+  const char * device_id = (void *) 0;
   mxml_node_t * signed_pk_node_p = (void *) 0;
   mxml_node_t * signature_node_p = (void *) 0;
   mxml_node_t * identity_key_node_p = (void *) 0;
@@ -530,16 +486,27 @@ int omemo_bundle_import (const char * received_bundle, omemo_bundle ** bundle_pp
     goto cleanup;
   }
 
-  split = g_strsplit(bundle_node_name, OMEMO_NS_SEPARATOR_FINAL, 6);
-  if (!g_strcmp0(OMEMO_NS_SEPARATOR, OMEMO_NS_SEPARATOR_FINAL)) {
-    device_id = g_strdup(split[5]);
-  } else {
-    device_id = g_strdup(split[1]);
-  }
-  bundle_p->device_id = device_id;
-
   item_node_p = mxmlFindPath(items_node_p, ITEM_NODE_NAME);
   if (!item_node_p) {
+    ret_val = OMEMO_ERR_MALFORMED_XML;
+    goto cleanup;
+  }
+
+#if (OMEMO_VERSION > 0)
+  device_id = mxmlElementGetAttr(item_node_p, ITEM_NODE_ID_ATTR_NAME);
+#endif
+  if (!device_id) {
+    // version 0 bundle
+    split = g_strsplit(bundle_node_name, OMEMO_NS_SEPARATOR_FINAL, 6);
+    if (!g_strcmp0(OMEMO_NS_SEPARATOR, OMEMO_NS_SEPARATOR_FINAL)) {
+      device_id = split[5];
+    } else {
+      device_id = split[1];
+    }
+  }
+  if (device_id) {
+    bundle_p->device_id = strdup(device_id);
+  } else {
     ret_val = OMEMO_ERR_MALFORMED_XML;
     goto cleanup;
   }
@@ -1093,45 +1060,43 @@ int omemo_message_prepare_encryption(char * outgoing_message, uint32_t sender_de
   msg_p->message_node_p = msg_node_p;
 
   body_node_p = mxmlFindPath(msg_node_p, BODY_NODE_NAME);
-  if (!body_node_p) {
-    ret_val = OMEMO_ERR_MALFORMED_XML;
-    goto cleanup;
-  }
+  if (body_node_p) {
+    msg_text = mxmlGetOpaque(body_node_p);
+    if (!msg_text) {
+      ret_val = OMEMO_ERR_MALFORMED_XML;
+      goto cleanup;
+    }
 
-  msg_text = mxmlGetOpaque(body_node_p);
-  if (!msg_text) {
-    ret_val = OMEMO_ERR_MALFORMED_XML;
-    goto cleanup;
-  }
 
-  ret_val = crypto_p->aes_gcm_encrypt_func((uint8_t *) msg_text, strlen(msg_text),
-                                           msg_p->iv_p, msg_p->iv_len,
-                                           msg_p->key_p, msg_p->key_len,
-                                           OMEMO_AES_GCM_TAG_LENGTH,
-                                           crypto_p->user_data_p,
-                                           &ct_p, &ct_len,
-                                           &tag_p);
-  if (ret_val) {
-    goto cleanup;
-  }
+    ret_val = crypto_p->aes_gcm_encrypt_func((uint8_t *) msg_text, strlen(msg_text),
+					     msg_p->iv_p, msg_p->iv_len,
+					     msg_p->key_p, msg_p->key_len,
+					     OMEMO_AES_GCM_TAG_LENGTH,
+					     crypto_p->user_data_p,
+					     &ct_p, &ct_len,
+					     &tag_p);
+    if (ret_val) {
+      goto cleanup;
+    }
 
-  msg_p->tag_len = OMEMO_AES_GCM_TAG_LENGTH;
-  memcpy(msg_p->key_p + msg_p->key_len, tag_p, msg_p->tag_len);
+    msg_p->tag_len = OMEMO_AES_GCM_TAG_LENGTH;
+    memcpy(msg_p->key_p + msg_p->key_len, tag_p, msg_p->tag_len);
 
-  ret_val = expect_next_node(body_node_p, mxmlGetParent, BODY_NODE_NAME, &body_node_p);
-  if (ret_val) {
-    goto cleanup;
-  }
+    ret_val = expect_next_node(body_node_p, mxmlGetParent, BODY_NODE_NAME, &body_node_p);
+    if (ret_val) {
+      goto cleanup;
+    }
 
-  mxmlRemove(body_node_p);
+    mxmlRemove(body_node_p);
 
-  payload_b64 = g_base64_encode(ct_p, ct_len);
-  payload_node_p = mxmlNewElement(MXML_NO_PARENT, PAYLOAD_NODE_NAME);
-  (void) mxmlNewOpaque(payload_node_p, payload_b64);
-  msg_p->payload_node_p = payload_node_p;
+    payload_b64 = g_base64_encode(ct_p, ct_len);
+    payload_node_p = mxmlNewElement(MXML_NO_PARENT, PAYLOAD_NODE_NAME);
+    (void) mxmlNewOpaque(payload_node_p, payload_b64);
+    msg_p->payload_node_p = payload_node_p;
 
-  if (strip == OMEMO_STRIP_ALL) {
-    omemo_message_strip_possible_plaintext(msg_p);
+    if (strip == OMEMO_STRIP_ALL) {
+      omemo_message_strip_possible_plaintext(msg_p);
+    }
   }
 
   *message_pp = msg_p;
@@ -1156,8 +1121,7 @@ size_t omemo_message_get_key_len(omemo_message * msg_p) {
   return msg_p->key_len + msg_p->tag_len;
 }
 
-// adds a "key" element with the given parameters to the header.
-static int add_recipient(omemo_message * msg_p, uint32_t device_id, const uint8_t * encrypted_key_p, size_t key_len, bool prekey) {
+int omemo_message_add_recipient(omemo_message * msg_p, const char * recipient_name_bare, uint32_t device_id, const uint8_t * encrypted_key_p, size_t key_len, int kex) {
   if (!msg_p || !msg_p->header_node_p || !encrypted_key_p) {
     return OMEMO_ERR_NULL;
   }
@@ -1167,32 +1131,34 @@ static int add_recipient(omemo_message * msg_p, uint32_t device_id, const uint8_
     return OMEMO_ERR;
   }
 
+#if (OMEMO_VERSION > 0)
+  mxml_node_t * recipient_node_p = mxmlFindElement(msg_p->header_node_p, msg_p->header_node_p,
+						   RECIPIENT_NODE_NAME, RECIPIENT_NODE_JID_ATTR_NAME,
+						   recipient_name_bare, MXML_DESCEND);
+  if (!recipient_node_p) {
+    recipient_node_p = mxmlNewElement(MXML_NO_PARENT, RECIPIENT_NODE_NAME);
+    mxmlElementSetAttr(recipient_node_p, RECIPIENT_NODE_JID_ATTR_NAME, recipient_name_bare);
+    mxmlAdd(msg_p->header_node_p, MXML_ADD_BEFORE, MXML_ADD_TO_PARENT, recipient_node_p);
+  }
+#endif
   gchar * key_b64 = g_base64_encode(encrypted_key_p, key_len);
   mxml_node_t * key_node_p =  mxmlNewElement(MXML_NO_PARENT, KEY_NODE_NAME);
   mxmlElementSetAttr(key_node_p, KEY_NODE_RID_ATTR_NAME, device_id_string);
-  (void) mxmlNewOpaque(key_node_p, key_b64);
-
-  if (prekey) {
-    mxmlElementSetAttr(key_node_p, KEY_NODE_PREKEY_ATTR_NAME, KEY_NODE_PREKEY_ATTR_VAL_TRUE);
-  }
-
-  mxmlAdd(msg_p->header_node_p, MXML_ADD_BEFORE, MXML_ADD_TO_PARENT, key_node_p);
-
   free(device_id_string);
+  if (kex)
+    mxmlElementSetAttr(key_node_p, KEY_NODE_KEX_ATTR_NAME, "true");
+  (void) mxmlNewOpaque(key_node_p, key_b64);
+#if (OMEMO_VERSION > 0)
+  mxmlAdd(recipient_node_p, MXML_ADD_BEFORE, MXML_ADD_TO_PARENT, key_node_p);
+#else
+  mxmlAdd(msg_p->header_node_p, MXML_ADD_BEFORE, MXML_ADD_TO_PARENT, key_node_p);
+#endif
   g_free(key_b64);
   return 0;
 }
 
-int omemo_message_add_recipient(omemo_message * msg_p, uint32_t device_id, const uint8_t * encrypted_key_p, size_t key_len) {
-  return add_recipient(msg_p, device_id, encrypted_key_p, key_len, false);
-}
-
-int omemo_message_add_recipient_w_prekey(omemo_message * msg_p, uint32_t device_id, const uint8_t * encrypted_key_p, size_t key_len) {
-  return add_recipient(msg_p, device_id, encrypted_key_p, key_len, true);
-}
-
 int omemo_message_export_encrypted(omemo_message * msg_p, int add_msg, char ** msg_xml) {
-  if (!msg_p || !msg_p->message_node_p || !msg_p->header_node_p || !msg_p->payload_node_p || !msg_xml) {
+  if (!msg_p || !msg_p->message_node_p || !msg_p->header_node_p || !msg_xml) {
     return OMEMO_ERR_NULL;
   }
 
@@ -1213,7 +1179,8 @@ int omemo_message_export_encrypted(omemo_message * msg_p, int add_msg, char ** m
   mxmlElementSetAttr(encrypted_node_p, XMLNS_ATTR_NAME, OMEMO_NS);
 
   mxmlAdd(encrypted_node_p, MXML_ADD_AFTER, MXML_ADD_TO_PARENT, msg_p->header_node_p);
-  mxmlAdd(encrypted_node_p, MXML_ADD_AFTER, MXML_ADD_TO_PARENT, msg_p->payload_node_p);
+  if (msg_p->payload_node_p)
+    mxmlAdd(encrypted_node_p, MXML_ADD_AFTER, MXML_ADD_TO_PARENT, msg_p->payload_node_p);
 
   if (add_msg == OMEMO_ADD_MSG_EME || add_msg == OMEMO_ADD_MSG_BOTH) {
     eme_node_p = mxmlNewElement(msg_p->message_node_p, EME_NODE_NAME);
@@ -1369,19 +1336,37 @@ char * omemo_message_get_recipient_name_bare(omemo_message * msg_p) {
   return jid_strip_resource(omemo_message_get_recipient_name_full(msg_p));
 }
 
-int omemo_message_get_encrypted_key(omemo_message * msg_p, uint32_t own_device_id, uint8_t ** key_pp, size_t * key_len_p ) {
+int omemo_message_get_encrypted_key(omemo_message * msg_p, const char * recipient_name, uint32_t own_device_id, uint8_t ** key_pp, size_t * key_len_p ) {
   if (!msg_p || !key_pp) {
     return OMEMO_ERR_NULL;
   }
 
   int ret_val = 0;
 
+  gchar * recipient_name_bare = (void *) 0;
+  mxml_node_t * recipient_node_p = (void *) 0;
   mxml_node_t * key_node_p = (void *) 0;
   char * rid_string = (void *) 0;
   const char * key_b64 = (void *) 0;
   size_t key_len = 0;
 
-  key_node_p = mxmlFindElement(msg_p->header_node_p, msg_p->header_node_p, KEY_NODE_NAME, NULL, NULL, MXML_DESCEND);
+  if (recipient_name) {
+    recipient_name_bare = jid_strip_resource(recipient_name);
+  } else {
+    recipient_name_bare = omemo_message_get_recipient_name_bare(msg_p);
+  }
+#if (OMEMO_VERSION > 0)
+  recipient_node_p = mxmlFindElement(msg_p->header_node_p, msg_p->header_node_p, RECIPIENT_NODE_NAME,
+				     RECIPIENT_NODE_JID_ATTR_NAME, recipient_name_bare,MXML_DESCEND);
+#endif
+  if (recipient_node_p) {
+    key_node_p = mxmlFindElement(recipient_node_p, recipient_node_p, KEY_NODE_NAME,
+				 NULL, NULL, MXML_DESCEND);
+  } else {
+    // Assuming there is no RECIPIENT_NODEs in the message.
+    key_node_p = mxmlFindElement(msg_p->header_node_p, msg_p->header_node_p, KEY_NODE_NAME,
+				 NULL, NULL, MXML_DESCEND);
+  }
   if (!key_node_p) {
     // if there is not at least one key, skip the rest of the function
     ret_val = 0;
@@ -1422,6 +1407,7 @@ int omemo_message_get_encrypted_key(omemo_message * msg_p, uint32_t own_device_i
   *key_len_p = key_len;
 
 cleanup:
+  g_free(recipient_name_bare);
   free(rid_string);
   return ret_val;
 }
